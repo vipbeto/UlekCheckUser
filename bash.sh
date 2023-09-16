@@ -29,8 +29,8 @@ if [ "$escolha" -eq 1 ]; then
     sudo apt update && sudo apt upgrade && sudo apt install python3 python3-pip && pip install sqlite3 hypercorn colorlog fastapi pydantic
     echo "instaled" > checkuserUlekInfo.txt
 
-
-
+    git clone https://github.com/UlekBR/UlekCheckUser.git
+    echo ~/.bashrc >> alias UlekCheckUser='nohup python3 /root/UlekCheckUser/menu.py'
 
     echo -e "${roxo}Para iniciar acessar o menu digite "UlekCheckuserMenu" (sem aspas)"
 
