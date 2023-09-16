@@ -27,20 +27,17 @@ read escolha
 
 if [ "$escolha" -eq 1 ]; then
     sudo apt update && sudo apt upgrade && sudo apt install python3 python3-pip && pip install sqlite3 hypercorn colorlog fastapi pydantic
-    echo "instaled" > checkuserUlekInfo.txt
+    echo "installed" > checkuserUlekInfo.txt
 
     git clone https://github.com/UlekBR/UlekCheckUser.git
-    echo ~/.bashrc >> alias UlekCheckUser='nohup python3 /root/UlekCheckUser/menu.py'
+    echo 'alias UlekCheckUser="nohup python3 /root/UlekCheckUser/menu.py"' >> ~/.bashrc
 
-    echo -e "${roxo}Para iniciar acessar o menu digite "UlekCheckuserMenu" (sem aspas)"
-
-if [ "$escolha" -eq 2 ]; then
+    echo -e "${roxo}Para iniciar, acesse o menu digitando 'UlekCheckUser' (sem aspas)."
+elif [ "$escolha" -eq 2 ]; then
     rm checkuserUlekInfo.txt
     rm -rf UlekCheckUser
 elif [ "$escolha" -eq 0 ]; then
-
-
-    exit N
+    exit 0
 else
-    echo "Opção inválida. Por favor, digite 1 para sim ou 0 para não."
+    echo "Opção inválida. Por favor, digite 1 para instalar, 2 para desinstalar ou 0 para cancelar."
 fi
