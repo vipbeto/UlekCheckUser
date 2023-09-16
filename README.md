@@ -3,3 +3,5 @@ Um simples check de usuario feito em python que funciona com varios aplicativos,
 para fazer a instalação rode o seguinte comando !
 
 ```bash <(wget -qO- https://github.com/UlekBR/UlekCheckUser/blob/main/bash.sh)```
+
+Feito por @UlekBR
