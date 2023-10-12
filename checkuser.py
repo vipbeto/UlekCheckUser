@@ -1,191 +1,198 @@
-import asyncio
-from datetime import datetime
 import os
-from fastapi import FastAPI, HTTPException, Request
 import sqlite3
 import argparse
-import hypercorn.asyncio
-from hypercorn import Config
-import logging
-import colorlog
+import subprocess
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import cgi
+import io
+import json
 
-app = FastAPI()
+def user_usuario(username):
+    with open('/etc/passwd', 'r') as f:
+        for line in f:
+            if username in line:
+                return True
+    return False
 
+def user_conectados(username):
+    ps_output = os.popen(f'ps aux | grep -v grep | grep ssh | grep -c {username}').read()
+    return ps_output.strip()
 
-def runCommand(action: str):
-    try:
-        command = f'{action}'
-        result = os.popen(command).readlines()
-        final = result[0].strip()
-        return final
-    except Exception as e:
-        return None
+def user_limite(username):
+    users_db_path = '/root/usuarios.db'
 
-
-def user_usuario(username: str):
-    if runCommand(f'grep -wc {username} /etc/passwd') == "1":
-        return username
+    if os.path.isfile(users_db_path):
+        with open(users_db_path, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) == 2 and parts[0] == username:
+                    return parts[1]
+                
     else:
-        return "Not exist"
-
-
-def user_conectados(username: str):
-    return runCommand(f'ps -u {username} | grep sshd | wc -l')
-
-
-def user_limite(username: str):
-    try:
-        if os.path.isfile('/root/usuarios.db'):
-            with open('/root/usuarios.db', 'r') as f:
-                for line in f:
-                    parts = line.strip().split()
-                    if len(parts) == 2 and parts[0] == username:
-                        return parts[1]
-    except Exception as e:
-        pass
-
-    try:
         connection = sqlite3.connect('/etc/DTunnelManager/db.sqlite3')
         cursor = connection.cursor()
         cursor.execute("SELECT connection_limit FROM users WHERE username = ?", (username,))
         result = cursor.fetchone()
         if result:
-            return f"{result[0]}"
-        else:
-            return "000"
-    except Exception as e:
-        return str(e)
+            return str(result[0]).zfill(3)
+        return "000"
 
 
-def user_data(username: str):
-    return runCommand(f"date -d \"$(chage -l {username} | grep -i co | awk -F : '{{print $2}}')\" '+%d/%m/%Y'")
 
+def get_chage_co_date(username):
+    try:
+        chage_output = subprocess.check_output(["chage", "-l", username]).decode("utf-8")
+        co_date_str = next((line.split(":")[-1].strip() for line in chage_output.splitlines() if "Account expires" in line), None)
+        return datetime.strptime(co_date_str, "%b %d, %Y") if co_date_str else None
+    except subprocess.CalledProcessError:
+        return None
 
-def user_dias_restantes(username: str):
-    return runCommand(
-        f'echo $((($(date -d "$(chage -l {username} | grep -i co | awk -F : \'{{print $2}}\')" "+%s") - $(date -d $(date "+%Y-%m-%d") "+%s")) / 86400))')
+def user_data(username):
+    co_date = get_chage_co_date(username)
+    return co_date.strftime("%d/%m/%Y") if co_date else "N/A"
 
+def user_dias_restantes(username):
+    co_date = get_chage_co_date(username)
+    return str((co_date - datetime.now()).days) if co_date else "N/A"
 
 def format_date_for_anymod(date_string):
     date = datetime.strptime(date_string, "%d/%m/%Y")
     formatted_date = date.strftime("%Y-%m-%d-")
     return formatted_date
 
+class CustomHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        try:
+            result = json.loads(post_data.decode('utf-8'))
+        except Exception as e:
+            result = post_data.decode('utf-8')
+        print(result)
 
+        global username, client_ip
+        try:
+            if self.path.startswith('/checkUser'):
+                username = result['user']
+                if username is None:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b'Bad Request')
+                    return
 
+                user_info = {
+                    "username": username,
+                    "count_connection": user_conectados(username),
+                    "expiration_date": user_data(username),
+                    "expiration_days": user_dias_restantes(username),
+                    "limiter_user": user_limite(username)
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+            elif self.path.startswith('/anymod'):
 
+                post_data_file = io.BytesIO(result.encode('utf-8'))
 
+                form = cgi.FieldStorage(
+                    fp=post_data_file,  # Use o corpo da solicitação POST aqui
+                    environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': 'application/x-www-form-urlencoded'}
+                )
 
-# Configuração do log com colorlog
-handler = colorlog.StreamHandler()
-handler.setFormatter(colorlog.ColoredFormatter(
-    "%(log_color)s%(levelname)s [%(name)s]: %(message)s",
-    log_colors={
-        'DEBUG': 'cyan',
-        'INFO': 'green',
-        'WARNING': 'yellow',
-        'ERROR': 'red',
-        'CRITICAL': 'bold_red',
-    }
-))
-logger = colorlog.getLogger()
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+                username = form.getvalue('username')
+                deviceid = form.getvalue('deviceid')
+                if username and deviceid is None:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b'Bad Request')
+                    return
 
+                if int(user_conectados(username)) >= 1:
+                    is_active = "true"
+                else: 
+                    is_active = "false"
 
+                user_info = {
+                  "USER_ID": username,
+                  "DEVICE": deviceid,
+                  "is_active": is_active,
+                  "expiration_date": format_date_for_anymod(user_data(username)),
+                  "expiry": f"{user_dias_restantes(username)} dias.",
+                  "uuid": "null"
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+                
+            else: 
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write("Url invalida, verifique e tente novamente !".encode('utf-8'))
 
-@app.post('/checkUser', response_model=dict)
-async def c4g(result: dict, request: Request):
-    global username, client_ip
-    try:
-        username = result['user']
-        client_ip = request.client.host
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(str(e).encode())
 
-        user_info = {
-            "username": username,
-            "count_connection": user_conectados(username),
-            "expiration_date": user_data(username),
-            "expiration_days": user_dias_restantes(username),
-            "limiter_user": user_limite(username)
-        }
-        logger.info(
-            f"Usando o CheckUser: [Conecta4g] | Solicitação bem-sucedida para o usuário ({username}) | IP da Requisição: {client_ip}")
-        return user_info
+    def do_GET(self):
+        if self.path.startswith('/gl/check/'):
+            start_index = self.path.find('/check/') + len('/check/')
+            end_index = self.path.find('?')
 
-    except Exception as e:
-        logger.error(
-            f"Usando o CheckUser: [Conecta4g] | Solicitação Mal-sucedida para o usuário ({username}) | IP da Requisição: {client_ip}")
-        raise HTTPException(status_code=500, detail=str(e))
+            if end_index != -1:
+                username = self.path[start_index:end_index]
+            else:
+                username = self.path[start_index:]
 
-
-# Repita o mesmo padrão para as outras duas rotas (/gl/check e /anymod)
-
-@app.get('/gl/check/{username}', response_model=dict)
-async def gl(username: str, request: Request):
-    global client_ip
-    try:
-        client_ip = request.client.host
-        user_info = {
-            "username": username,
-            "count_connection": user_conectados(username),
-            "expiration_date": user_data(username),
-            "expiration_days": user_dias_restantes(username),
-            "limit_connection": user_limite(username)
-        }
-        logger.info(
-            f"Usando o CheckUser: [GlTunnel] | Solicitação bem-sucedida para o usuário ({username}) | IP da Requisição: {client_ip}")
-        return user_info
-
-    except Exception as e:
-        logger.error(
-            f"Usando o CheckUser: [GlTunnel] | Solicitação mal-sucedida para o usuário ({username}) | IP da Requisição: {client_ip}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post('/anymod', response_model=dict)
-async def anymod(username: str, deviceid: str):
-    try:
-        user = user_usuario(username)
-        online = user_conectados(user)
-        limite = user_limite(user)
-        device = "false" if online > limite else deviceid
-        is_active = "false" if online > limite else "true"
-        response = {
-            "USER_ID": username,
-            "DEVICE": device,
-            "is_active": is_active,
-            "expiration_date": format_date_for_anymod(user_data(user)),
-            "expiry": f"{user_dias_restantes(user)} dias.",
-            "uuid": "null"
-        }
-        logger.info(
-            f"Usando o CheckUser: [AnyVPN] | Solicitação bem-sucedida para o usuário ({username}) | IP da Requisição: {client_ip}")
-        return response
-
-    except Exception as e:
-        logger.error(
-            f"Usando o CheckUser: [AnyVPN] | Solicitação mal-sucedida para o usuário ({username}) | IP da Requisição: {client_ip}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+            client_ip = self.client_address[0]
+            try:
+                user_info = {
+                    "username": username,
+                    "count_connection": user_conectados(username),
+                    "expiration_date": user_data(username),
+                    "expiration_days": user_dias_restantes(username),
+                    "limit_connection": user_limite(username)
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        elif self.path.startswith('/dtmod/check/'):
+            username = self.path.split('/')[3]
+            client_ip = self.client_address[0]
+            try:
+                user_info = {
+                    "username": username,
+                    "count_connections": int(user_conectados(username)),
+                    "expiration_date": user_data(username),
+                    "expiration_days": int(user_dias_restantes(username)),
+                    "limit_connections": int(user_limite(username)),
+                    "status": 200
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+            
 def parse_args():
-    parser = argparse.ArgumentParser(description="Meu aplicativo com Hypercorn")
+    parser = argparse.ArgumentParser(description="CheckUser")
     parser.add_argument('--port', type=int, default=5000, help="Porta para executar o aplicativo")
     return parser.parse_args()
-
 
 if __name__ == "__main__":
     args = parse_args()
     porta = args.port
-    hypercorn_config = Config()
-    hypercorn_config.bind = [f"0.0.0.0:{porta}"]
-    hypercorn_config.use_reloader = True  # Para desenvolvimento, pode ser removido em produção
-
-
-    async def run():
-        await hypercorn.asyncio.serve(app, hypercorn_config)
-
-
-    # Executar o loop de eventos assíncrono
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(run())
+    server = HTTPServer(('0.0.0.0', porta), CustomHandler)
+    print(f"Servidor iniciado na porta {porta}")
+    server.serve_forever()
