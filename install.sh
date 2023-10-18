@@ -5,3 +5,5 @@ git clone https://github.com/UlekBR/UlekCheckUser.git
 chmod +x /root/UlekCheckUser/checkuserMenu.sh
 ln -s /root/UlekCheckUser/checkuserMenu.sh /usr/local/bin/ulekCheckuser
 
+clear
+echo "Para iniciar o menu digite: ulekCheckuser"
