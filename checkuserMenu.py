@@ -28,13 +28,13 @@ def obter_do_cache(chave):
 
 def carregar_cache():
     try:
-        with open('/root/UlekCheckuser/cache.json', 'r') as arquivo:
+        with open('/root/UlekCheckUser/cache.json', 'r') as arquivo:
             return json.load(arquivo)
     except (FileNotFoundError, json.JSONDecodeError):
         return {} 
     
 def salvar_cache(cache):
-    with open('/root/UlekCheckuser/cache.json', 'w') as arquivo:
+    with open('/root/UlekCheckUser/cache.json', 'w') as arquivo:
         json.dump(cache, arquivo)
 
 
@@ -62,7 +62,7 @@ def verificar_processo(nome_processo):
     return False
 
 
-nome_do_script = "/root/UlekCheckuser/checkuser.py"
+nome_do_script = "/root/UlekCheckUser/checkuser.py"
 
 
 

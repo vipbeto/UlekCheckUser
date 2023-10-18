@@ -1,2 +1,2 @@
 #!/bin/bash
-python3 /root/UlekCheckuser/checkuserMenu.py
+python3 /root/UlekCheckUser/checkuserMenu.py
