@@ -185,13 +185,13 @@ class CustomHandler(BaseHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(str(e).encode())
             
-def parse_args():
-    parser = argparse.ArgumentParser(description="CheckUser")
-    parser.add_argument('--port', type=int, default=5000, help="Porta para executar o aplicativo")
-    return parser.parse_args()
+
 
 if __name__ == "__main__":
-    args = parse_args()
+    parser = argparse.ArgumentParser(description="Servidor HTTP com porta personalizável")
+    parser.add_argument('--port', type=int, default=5555, help="Porta do servidor (padrão: 5555)")
+    args = parser.parse_args()
+
     porta = args.port
     server = HTTPServer(('0.0.0.0', porta), CustomHandler)
     print(f"Servidor iniciado na porta {porta}")
