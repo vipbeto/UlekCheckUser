@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import socket
+import urllib.request
 import json
 
 cor_vermelha = "\033[91m"
@@ -38,16 +39,16 @@ def salvar_cache(cache):
         json.dump(cache, arquivo)
 
 
-def get_network_ip():
+def get_public_ip():
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        network_ip = s.getsockname()[0]
-
-        return network_ip
+        response = urllib.request.urlopen("https://ifconfig.me")
+        public_ip = response.read().decode("utf-8")
+        return public_ip
     except Exception as e:
-        print("Não foi possível obter o endereço IP da rede:", str(e))
+        print("Não foi possível obter o endereço IP público:", str(e))
         return None
+
+
 
 
 def verificar_processo(nome_processo):
@@ -91,8 +92,10 @@ if __name__ == "__main__":
         option = input("Digite a opção: ")
 
         if option == "1":
+
+            print(f"Observação: Para funcionar com security apenas se usar a porta 5454 !")
             
-            adicionar_ao_cache('porta', input("Digite a porta que deseja usar !"))
+            adicionar_ao_cache('porta', input("\nDigite a porta que deseja usar !"))
 
             os.system('clear')
             print(f'Porta escolhida: {obter_do_cache("porta")}')
@@ -129,12 +132,20 @@ if __name__ == "__main__":
             if verificar_processo(nome_do_script):
                 print("Abaixo os apps, e os links para cada um: ")
                 print("")
-                ip = get_network_ip()
+                ip = get_public_ip()
                 porta = obter_do_cache("porta")
                 print(f" DtunnelMod - http://{ip}:{porta}/dtmod  ")
                 print(f" GltunnelMod - http://{ip}:{porta}/gl ")
                 print(f" AnyVpnMod - http://{ip}:{porta}/anymod ")
                 print(f" Conecta4g - http://{ip}:{porta}/checkUser ")
+                print("")
+
+                print("Para usar com security (por favor, use apenas esses links com security e conexões que não usam cloudflare para não sobrecarregar nossos servidores)")
+                print("")
+                print(f" DtunnelMod - http://proxy.ulekservices.shop/api.php?url=http://{ip}:{porta}/dtmod  ")
+                print(f" GltunnelMod - http://proxy.ulekservices.shop/api.php?url=http://{ip}:{porta}/gl ")
+                print(f" AnyVpnMod - http://proxy.ulekservices.shop/api.php?url=http://{ip}:{porta}/anymod ")
+                print(f" Conecta4g - http://proxy.ulekservices.shop/api.php?url=http://{ip}:{porta}/checkUser ")
                 print("")
 
             else:
