@@ -1,172 +1,221 @@
-
 import os
+import sqlite3
+import argparse
 import subprocess
-import sys
-import socket
-import urllib.request
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import cgi
+import io
 import json
 
-cor_vermelha = "\033[91m"
-cor_verde = "\033[92m"
-cor_amarela = "\033[93m"
-cor_azul = "\033[94m"
-cor_reset = "\033[0m"
-
-def adicionar_ao_cache(chave, valor):
-    cache = carregar_cache()  
-    cache[chave] = valor
-    salvar_cache(cache)  
-
-def remover_do_cache(chave):
-    cache = carregar_cache()  
-    if chave in cache:
-        del cache[chave]
-        salvar_cache(cache) 
-
-def obter_do_cache(chave):
-    cache = carregar_cache()  
-    return cache.get(chave)
-
-def carregar_cache():
-    try:
-        with open('/root/UlekCheckUser/cache.json', 'r') as arquivo:
-            return json.load(arquivo)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {} 
-    
-def salvar_cache(cache):
-    with open('/root/UlekCheckUser/cache.json', 'w') as arquivo:
-        json.dump(cache, arquivo)
-
-
-def get_public_ip():
-    try:
-        response = urllib.request.urlopen("https://ifconfig.me")
-        public_ip = response.read().decode("utf-8")
-        return public_ip
-    except Exception as e:
-        print("Não foi possível obter o endereço IP público:", str(e))
-        return None
-
-
-
-
-def verificar_processo(nome_processo):
-    try:
-        resultado = subprocess.check_output(["ps", "aux"]).decode()
-        linhas = resultado.split('\n')
-        for linha in linhas:
-            if nome_processo in linha and "python" in linha:
+def user_usuario(username):
+    with open('/etc/passwd', 'r') as f:
+        for line in f:
+            if username in line:
                 return True
-    except subprocess.CalledProcessError as e:
-        print(f"Erro ao verificar o processo: {e}")
     return False
 
+def user_conectados(username):
+    ps_output = os.popen(f'ps aux | grep -v grep | grep ssh | grep -c {username}').read()
+    return ps_output.strip()
 
-nome_do_script = "/root/UlekCheckUser/checkuser.py"
+def user_limite(username):
+    users_db_path = '/root/usuarios.db'
+
+    if os.path.isfile(users_db_path):
+        with open(users_db_path, 'r') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) == 2 and parts[0] == username:
+                    return parts[1]
+                
+    else:
+        connection = sqlite3.connect('/etc/DTunnelManager/db.sqlite3')
+        cursor = connection.cursor()
+        cursor.execute("SELECT connection_limit FROM users WHERE username = ?", (username,))
+        result = cursor.fetchone()
+        if result:
+            return str(result[0]).zfill(3)
+        return "000"
 
 
+
+def get_chage_co_date(username):
+    try:
+        chage_output = subprocess.check_output(["chage", "-l", username]).decode("utf-8")
+        co_date_str = next((line.split(":")[-1].strip() for line in chage_output.splitlines() if "Account expires" in line), None)
+        return datetime.strptime(co_date_str, "%b %d, %Y") if co_date_str else None
+    except subprocess.CalledProcessError:
+        return None
+
+def user_data(username):
+    co_date = get_chage_co_date(username)
+    return co_date.strftime("%d/%m/%Y") if co_date else "N/A"
+
+def user_dias_restantes(username):
+    co_date = get_chage_co_date(username)
+    return str((co_date - datetime.now()).days) if co_date else "N/A"
+
+def format_date_for_anymod(date_string):
+    date = datetime.strptime(date_string, "%d/%m/%Y")
+    formatted_date = date.strftime("%Y-%m-%d-")
+    return formatted_date
+
+class CustomHandler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_length = int(self.headers['Content-Length'])
+        post_data = self.rfile.read(content_length)
+        try:
+            result = json.loads(post_data.decode('utf-8'))
+        except Exception as e:
+            result = post_data.decode('utf-8')
+        print(result)
+
+        global username, client_ip
+        try:
+            if self.path.startswith('/checkUser'):
+                username = result['user']
+                if username is None:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b'Bad Request')
+                    return
+
+                user_info = {
+                    "username": username,
+                    "count_connection": user_conectados(username),
+                    "expiration_date": user_data(username),
+                    "expiration_days": user_dias_restantes(username),
+                    "limiter_user": user_limite(username)
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+            elif self.path.startswith('/anymod'):
+
+                post_data_file = io.BytesIO(result.encode('utf-8'))
+
+                form = cgi.FieldStorage(
+                    fp=post_data_file, 
+                    environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': 'application/x-www-form-urlencoded'}
+                )
+
+                username = form.getvalue('username')
+                deviceid = form.getvalue('deviceid')
+                if username and deviceid is None:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b'Bad Request')
+                    return
+
+                if int(user_conectados(username)) >= 1:
+                    is_active = "true"
+                else: 
+                    is_active = "false"
+
+                user_info = {
+                  "USER_ID": username,
+                  "DEVICE": deviceid,
+                  "is_active": is_active,
+                  "expiration_date": format_date_for_anymod(user_data(username)),
+                  "expiry": f"{user_dias_restantes(username)} dias.",
+                  "uuid": "null"
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+                
+            else: 
+                self.send_response(404)
+                self.end_headers()
+                self.wfile.write("Url invalida, verifique e tente novamente !".encode('utf-8'))
+
+        except Exception as e:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(str(e).encode())
+
+    def do_GET(self):
+        if self.path.startswith('/gl/check/'):
+            start_index = self.path.find('/check/') + len('/check/')
+            end_index = self.path.find('?')
+
+            if end_index != -1:
+                username = self.path[start_index:end_index]
+            else:
+                username = self.path[start_index:]
+
+            client_ip = self.client_address[0]
+            try:
+                user_info = {
+                    "username": username,
+                    "count_connection": user_conectados(username),
+                    "expiration_date": user_data(username),
+                    "expiration_days": user_dias_restantes(username),
+                    "limit_connection": user_limite(username)
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        elif self.path.startswith('/dtmod/check/'):
+            username = self.path.split('/')[3]
+            client_ip = self.client_address[0]
+            try:
+                user_info = {
+                    "username": username,
+                    "count_connections": int(user_conectados(username)),
+                    "expiration_date": user_data(username),
+                    "expiration_days": int(user_dias_restantes(username)),
+                    "limit_connections": int(user_limite(username)),
+                    "status": 200
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+        elif self.path.startswith('/atx?user='):
+            start_index = self.path.find('/atx?user=') + len('/atx?user=')
+
+            username = self.path[start_index:]
+
+            client_ip = self.client_address[0]
+            try:
+                user_info = {
+                    "username": username,
+                    "cont_conexao": user_conectados(username),
+                    "data_expiracao": user_data(username),
+                    "dias_expiracao": user_dias_restantes(username),
+                    "limite_user": user_limite(username)
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+
+            
 
 
 if __name__ == "__main__":
-    while True:
-        os.system('clear')
+    parser = argparse.ArgumentParser(description="Servidor HTTP com porta personalizável")
+    parser.add_argument('--port', type=int, default=5555, help="Porta do servidor (padrão: 5555)")
+    args = parser.parse_args()
 
-
-        if verificar_processo(nome_do_script):
-            status = f'{cor_verde}ativo{cor_reset} - porta em uso: {obter_do_cache("porta")}'
-        else:
-            status = f'{cor_vermelha}parado{cor_reset} - porta que será usada: {obter_do_cache("porta")}'
-       
-        print(f"Status: {status}")
-
-        print(f"")
-
-        print(f"Selecione uma opção:")
-        print(f" 1 - Iniciar checkuser")
-        print(f" 2 - Parar checkuser")
-        print(f" 3 - Verificar links")
-        print(f" 4 - Sobre")
-        print(f" 0 - Sair do menu")
-
-        option = input("Digite a opção: ")
-
-        if option == "1":
-
-            print(f"Observação: Para funcionar com security apenas se usar a porta 5454 !")
-            
-            adicionar_ao_cache('porta', input("\nDigite a porta que deseja usar !"))
-
-            os.system('clear')
-            print(f'Porta escolhida: {obter_do_cache("porta")}')
-
-            os.system(f'nohup python3 {nome_do_script} --port {obter_do_cache("porta")} & ')
-
-            input(f"\nPressione a tecla enter para voltar ao menu\n\n")
-        elif option == "2":
-            if verificar_processo(nome_do_script):
-                comando = f'fuser -n tcp {obter_do_cache("porta")} 2>/dev/null'
-
-                try:
-                    saida_bytes = subprocess.check_output(comando, shell=True)
-                    pid = saida_bytes.decode('utf-8').strip()
-
-                    print(pid)
-
-                    if pid.isdigit():
-                        subprocess.run(f"kill -9 {pid}", shell=True)
-                    else:
-                        print("O processo não foi encontrado.")
-                        
-                except subprocess.CalledProcessError:
-                    print("Erro ao executar o comando.")
-                remover_do_cache("porta")
-            else: 
-                print("O Checkuser não está ativo.")
-            
-
-
-            input(f"Pressione a tecla enter para voltar ao menu")
-        elif option == "3":
-            os.system('clear')
-            if verificar_processo(nome_do_script):
-                print("Abaixo os apps, e os links para cada um: ")
-                print("")
-                ip = get_public_ip()
-                porta = obter_do_cache("porta")
-                print(f" DtunnelMod - http://{ip}:{porta}/dtmod  ")
-                print(f" GltunnelMod - http://{ip}:{porta}/gl ")
-                print(f" AnyVpnMod - http://{ip}:{porta}/anymod ")
-                print(f" Conecta4g - http://{ip}:{porta}/checkUser ")
-                print("")
-
-                print("Para usar com security (por favor, use apenas esses links com security e conexões que não usam cloudflare para não sobrecarregar nossos servidores)")
-                print("")
-                print(f" DtunnelMod - http://proxy.ulekservices.shop/api.php?url=http://{ip}:{porta}/dtmod  ")
-                print(f" GltunnelMod - http://proxy.ulekservices.shop/api.php?url=http://{ip}:{porta}/gl ")
-                print(f" AnyVpnMod - http://proxy.ulekservices.shop/api.php?url=http://{ip}:{porta}/anymod ")
-                print(f" Conecta4g - http://proxy.ulekservices.shop/api.php?url=http://{ip}:{porta}/checkUser ")
-                print("")
-
-            else:
-                print("\nInicie o serviço primeiro\n")
-            input(f"Pressione a tecla enter para voltar ao menu")
-                  
-
-        elif option == "4":
-            os.system('clear')
-            print(f"Olá, esse é um multi-checkuser criado por @UlekBR")
-            print(f"Com esse checkuser venho trazendo a possibilidade de usar em diversos apps")
-            print(f"Apps como: ")
-            print(f" - DtunnelMod")
-            print(f" - GlTunnelMod")
-            print(f" - AnyVpnMod")
-            print(f" - Conecta4g")
-            print(f"")
-            input(f"Pressione a tecla enter para voltar ao menu")
-        elif option == "0":
-            sys.exit(0)
-        else:
-            os.system('clear')
-            print(f"Selecionado uma opção invalida, tente novamente !")
-            input(f"Pressione a tecla enter para voltar ao menu")
+    porta = args.port
+    server = HTTPServer(('0.0.0.0', porta), CustomHandler)
+    print(f"Servidor iniciado na porta {porta}")
+    server.serve_forever()
