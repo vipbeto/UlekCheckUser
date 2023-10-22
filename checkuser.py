@@ -97,7 +97,7 @@ class CustomHandler(BaseHTTPRequestHandler):
                 post_data_file = io.BytesIO(result.encode('utf-8'))
 
                 form = cgi.FieldStorage(
-                    fp=post_data_file,  # Use o corpo da solicitação POST aqui
+                    fp=post_data_file, 
                     environ={'REQUEST_METHOD': 'POST', 'CONTENT_TYPE': 'application/x-www-form-urlencoded'}
                 )
 
@@ -184,6 +184,29 @@ class CustomHandler(BaseHTTPRequestHandler):
                 self.send_response(500)
                 self.end_headers()
                 self.wfile.write(str(e).encode())
+        elif self.path.startswith('/atx?user='):
+            start_index = self.path.find('/atx?user=') + len('/atx?user=')
+
+            username = self.path[start_index:]
+
+            client_ip = self.client_address[0]
+            try:
+                user_info = {
+                    "username": username,
+                    "cont_conexao": user_conectados(username),
+                    "data_expiracao": user_data(username),
+                    "dias_expiracao": user_dias_restantes(username),
+                    "limite_user": user_limite(username)
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(user_info).encode())
+            except Exception as e:
+                self.send_response(500)
+                self.end_headers()
+                self.wfile.write(str(e).encode())
+
             
 
 
