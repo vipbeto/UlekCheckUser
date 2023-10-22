@@ -16,7 +16,7 @@ def user_usuario(username):
     return False
 
 def user_conectados(username):
-    ps_output = os.popen(f'ps aux | grep -v grep | grep ssh | grep -c {username}').read()
+    ps_output = os.popen(f'ps -u {username} | grep sshd | wc -l').read()
     return ps_output.strip()
 
 def user_limite(username):
