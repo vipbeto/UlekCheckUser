@@ -8,7 +8,7 @@ reset="\e[0m"
 
 rm -rf /root/UlekCheckUser/
 rm -f /usr/local/bin/ulekCheckuser
-
+pkill -9 -f "/root/UlekCheckUser/checkuser.py"
 
 apt update && apt upgrade -y && apt install python3 git -y
 git clone https://github.com/UlekBR/UlekCheckUser.git
